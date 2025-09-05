@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from datetime import datetime, timedelta
 import pandas as pd
+from prediction import get_stock_data, prepare_features, train_model, predict_future_prices
+import numpy as np
 
 class SimpleStockGUI:
     def __init__(self):
@@ -14,22 +16,16 @@ class SimpleStockGUI:
         self.window.title("Simple Stock Analysis")
         self.window.geometry("1000x800")
         
-        # Add a title at the top
-        title = tk.Label(self.window, text="Stock Price Analyzer", 
+        title = tk.Label(self.window, text="Stock Price Analyser", 
                         font=('Arial', 24), pady=10)
         title.pack()
         
-        # Create input section
+        # Sections
         self.create_input_section()
-        
-        # Create chart area
         self.create_chart_area()
-        
-        # Create info section
         self.create_info_section()
     
     def create_input_section(self):
-        """Create the section for user inputs"""
         input_frame = ttk.LabelFrame(self.window, text="Enter Stock Details", padding=10)
         input_frame.pack(fill='x', padx=10)
         
@@ -39,14 +35,12 @@ class SimpleStockGUI:
         
         ttk.Label(symbol_frame, text="Stock Symbol:").pack(side='left')
         self.symbol_entry = ttk.Entry(symbol_frame, width=10)
-        self.symbol_entry.insert(0, "AAPL")  # Default value
+        self.symbol_entry.insert(0, "AAPL")  # Default
         self.symbol_entry.pack(side='left', padx=5)
         
         # Date range input
         date_frame = ttk.Frame(input_frame)
         date_frame.pack(fill='x', pady=5)
-        
-        # Calculate default dates (1 year of data)
         end_date = datetime.now()
         start_date = end_date - timedelta(days=365)
         
@@ -61,21 +55,22 @@ class SimpleStockGUI:
         self.end_date.pack(side='left', padx=5)
         
         # Analyze button
-        self.analyze_btn = ttk.Button(input_frame, text="Analyze Stock", 
+        self.analyze_btn = ttk.Button(input_frame, text="Analyse Stock", 
                                     command=self.analyze_stock)
-        self.analyze_btn.pack(pady=10)
+        self.analyze_btn.pack(pady=5)
+        
+        # Predict button
+        self.predict_btn = ttk.Button(input_frame, text="Predict Future Price", 
+                                    command=self.predict_stock)
+        self.predict_btn.pack(pady=5)
     
     def create_chart_area(self):
-        """Create the area where charts will be displayed"""
         self.chart_frame = ttk.LabelFrame(self.window, text="Stock Price Chart", 
-                                        padding=10)
+                        padding=10)
         self.chart_frame.pack(fill='both', expand=True, padx=10, pady=5)
-        
-        # We'll create the actual chart when data is loaded
         self.canvas = None
     
     def create_info_section(self):
-        """Create the section for displaying stock information"""
         self.info_frame = ttk.LabelFrame(self.window, text="Stock Information", 
                                        padding=10)
         self.info_frame.pack(fill='x', padx=10, pady=5)
@@ -89,9 +84,15 @@ class SimpleStockGUI:
         
         self.volume_label = ttk.Label(self.info_frame, text="")
         self.volume_label.pack()
+        
+        # Prediction info labels
+        self.prediction_label = ttk.Label(self.info_frame, text="", foreground="blue")
+        self.prediction_label.pack()
+        
+        self.accuracy_label = ttk.Label(self.info_frame, text="", foreground="green")
+        self.accuracy_label.pack()
     
     def analyze_stock(self):
-        """Analyze the stock and update the display"""
         try:
             # Get values from inputs
             symbol = self.symbol_entry.get().upper()
@@ -122,11 +123,8 @@ class SimpleStockGUI:
             self.analyze_btn.config(text="Analyze Stock", state='normal')
     
     def update_chart(self, data):
-        """Update the stock price chart"""
-        # Clear previous chart
         if self.canvas:
             self.canvas.get_tk_widget().destroy()
-        
         # Create new chart
         fig, ax = plt.subplots(figsize=(10, 6))
         
@@ -141,17 +139,16 @@ class SimpleStockGUI:
         ax.grid(True, alpha=0.3)
         ax.legend()
         
-        # Add chart to GUI
+        # Add chart
         self.canvas = FigureCanvasTkAgg(fig, self.chart_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill='both', expand=True)
     
     def update_info(self, data):
-        """Update the stock information display"""
-        current_price = data['Close'].iloc[-1]
-        price_change = ((current_price - data['Close'].iloc[0]) / 
-                       data['Close'].iloc[0] * 100)
-        avg_volume = data['Volume'].mean() / 1_000_000  # Convert to millions
+        current_price = float(data['Close'].iloc[-1])
+        first_price = float(data['Close'].iloc[0])
+        price_change = ((current_price - first_price) / first_price) * 100
+        avg_volume = float(data['Volume'].mean()) / 1_000_000
         
         self.current_price_label.config(
             text=f"Current Price: ${current_price:.2f}")
@@ -160,8 +157,88 @@ class SimpleStockGUI:
         self.volume_label.config(
             text=f"Average Daily Volume: {avg_volume:.1f}M shares")
     
+    def predict_stock(self):
+        try:
+            symbol = self.symbol_entry.get().upper()
+            
+            self.predict_btn.config(text="Predicting...", state='disabled')
+            
+            # Get data using prediction module
+            data = get_stock_data(symbol, 365)
+            
+            if len(data) == 0:
+                messagebox.showerror("Error", "No data found for prediction!")
+                return
+            
+            # Prepare features and train model
+            features = prepare_features(data)
+            model, accuracy, feature_names = train_model(features)
+            
+            # Make 30-day predictions
+            predictions = predict_future_prices(model, features, feature_names, 30)
+            
+            # Create prediction dates
+            last_date = data.index[-1]
+            future_dates = pd.date_range(start=last_date + timedelta(days=1), periods=30, freq='B')
+            
+            # Update chart with predictions
+            self.update_chart_with_prediction(data, predictions, future_dates)
+            
+            # Update prediction info
+            current_price = float(data['Close'].iloc[-1])
+            predicted_price = predictions[-1]
+            change_percent = ((predicted_price - current_price) / current_price) * 100
+            
+            self.prediction_label.config(
+                text=f"30-day Prediction: ${predicted_price:.2f} ({change_percent:+.1f}%)")
+            self.accuracy_label.config(
+                text=f"Model Accuracy: {accuracy:.1%}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Prediction failed: {str(e)}")
+        finally:
+            self.predict_btn.config(text="Predict Future Price", state='normal')
+    
+    def update_chart_with_prediction(self, data, predictions, future_dates):
+        if self.canvas:
+            self.canvas.get_tk_widget().destroy()
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Plot historical data (last 60 days)
+        recent_data = data.tail(60)
+        ax.plot(recent_data.index, recent_data['Close'], label='Historical Price', 
+                linewidth=2, color='blue')
+        
+        # Plot moving averages
+        if 'MA20' in data.columns:
+            ax.plot(recent_data.index, recent_data['MA20'], label='20-day MA', 
+                    alpha=0.7, color='orange')
+        
+        # Plot predictions
+        ax.plot(future_dates, predictions, label='Predicted Price', 
+                linewidth=2, color='red', linestyle='--')
+        
+        # Add confidence band
+        confidence = np.array(predictions) * 0.1
+        ax.fill_between(future_dates, 
+                       np.array(predictions) - confidence, 
+                       np.array(predictions) + confidence, 
+                       color='red', alpha=0.2, label='Confidence Band')
+        
+        ax.set_title('Stock Price Analysis with Prediction', pad=20)
+        ax.set_xlabel('Date')
+        ax.set_ylabel('Price ($)')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        
+        self.canvas = FigureCanvasTkAgg(fig, self.chart_frame)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(fill='both', expand=True)
+    
     def run(self):
-        """Start the GUI application"""
         self.window.mainloop()
 
 if __name__ == "__main__":
